@@ -22,6 +22,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.get("/")
+def root():
+    return {
+        "message": "Delhi NCR Coupled AQI API is running",
+        "docs": "/docs",
+        "endpoints": ["/forecast", "/inversion", "/plumes", "/compare", "/grap/status"],
+    }
+
 @app.get("/health")
 def health():
     return {"status": "the front desk is open"}
