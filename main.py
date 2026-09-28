@@ -1,15 +1,8 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from data_loader import load_forecast
+from data_loader import load_forecast, load_plumes
 from grap import get_grap_stage
-from models import (
-    ForecastResponse,
-    InversionReading,
-    PlumesResponse,
-    CompareResponse,
-    GrapStatus,
-)
 
 app = FastAPI(
     title="Delhi NCR Coupled AQI API",
@@ -18,7 +11,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],   # tighten this later
+    allow_origins=["*"],   # tighten this once M6's real site address is known
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -29,7 +22,13 @@ def root():
     return {
         "message": "Delhi NCR Coupled AQI API is running",
         "docs": "/docs",
-        "endpoints": ["/forecast", "/inversion", "/plumes", "/compare", "/grap/status"],
+        "endpoints": [
+            "/api/v1/forecast",
+            "/api/v1/plumes",
+            "/inversion",
+            "/compare",
+            "/grap/status",
+        ],
     }
 
 
@@ -38,8 +37,14 @@ def health():
     return {"status": "the front desk is open"}
 
 
-@app.get("/forecast", response_model=ForecastResponse)
-def forecast(station: str | None = None):
+# ---------------------------------------------------------------
+# Member 4 asked for these two to be served exactly as their files
+# are written, with no reshaping — so no Pydantic model here, just
+# the raw dict / GeoJSON, straight from disk (through the cache).
+# ---------------------------------------------------------------
+
+@app.get("/api/v1/forecast")
+def forecast_v1(station: str | None = None):
     data = load_forecast()
     if station is None:
         return data
@@ -49,19 +54,24 @@ def forecast(station: str | None = None):
     return {"meta": data["meta"], "stations": matches}
 
 
-@app.get("/inversion", response_model=InversionReading)
+@app.get("/api/v1/plumes")
+def plumes_v1():
+    return load_plumes()
+
+
+# Old paths kept as aliases, so Member 6's current frontend doesn't
+# break while they migrate to the new /api/v1/... paths.
+app.add_api_route("/forecast", forecast_v1, methods=["GET"])
+app.add_api_route("/plumes", plumes_v1, methods=["GET"])
+
+
+@app.get("/inversion")
 def inversion():
-    # still fake until Member 2 sends real data
+    # still a placeholder — waiting on a dedicated inversion feed from Member 2
     return {"region": "NCR", "inversion_strength": "moderate", "delta_t": 3.2}
 
 
-@app.get("/plumes", response_model=PlumesResponse)
-def plumes():
-    # still fake until Member 2 sends real data
-    return {"plumes": [{"source": "Punjab", "frp": 145.2, "direction": "SE"}]}
-
-
-@app.get("/compare", response_model=CompareResponse)
+@app.get("/compare")
 def compare():
     data = load_forecast()
     return {
@@ -85,25 +95,39 @@ def compare():
     }
 
 
-@app.get("/grap/status", response_model=GrapStatus)
+@app.get("/grap/status")
 def grap_status():
     data = load_forecast()
 
-    # "Right now" = hour 0, worst station
-    worst_now = max(s["hourly"][0]["aqi_coupled"] for s in data["stations"])
+    # "Right now" per station comes straight from Member 4's own
+    # current_conditions block plus hour-0 AQI — not recomputed here.
+    now_by_station = [
+        {
+            "station_id": s["station_id"],
+            "station_name": s["station_name"],
+            "aqi_now": s["hourly"][0]["aqi_coupled"],
+            "grap_stage": s["hourly"][0]["grap_stage"],
+            "grap_action": s["hourly"][0]["grap_action"],
+            "current_conditions": s.get("current_conditions"),
+        }
+        for s in data["stations"]
+    ]
+    worst_now = max(now_by_station, key=lambda r: r["aqi_now"])
 
-    # Worst moment in the whole 72 hours, across all stations
-    peak_aqi, peak_hour = 0, 0
+    # Worst moment anywhere in the 72-hour window
+    peak_aqi, peak_hour, peak_station = 0, 0, None
     for s in data["stations"]:
         for hr in s["hourly"]:
             if hr["aqi_coupled"] > peak_aqi:
-                peak_aqi, peak_hour = hr["aqi_coupled"], hr["h"]
+                peak_aqi, peak_hour, peak_station = hr["aqi_coupled"], hr["h"], s["station_id"]
 
     return {
-        "worst_current_aqi": worst_now,
-        "triggered_stage": get_grap_stage(worst_now),
+        "worst_current_aqi": worst_now["aqi_now"],
+        "worst_current_station": worst_now["station_id"],
+        "triggered_stage": get_grap_stage(worst_now["aqi_now"]),
         "peak_72h_aqi": peak_aqi,
         "peak_hour": peak_hour,
+        "peak_station": peak_station,
         "peak_stage": get_grap_stage(peak_aqi),
+        "stations_now": now_by_station,
     }
-
