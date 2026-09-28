@@ -2,7 +2,13 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from mock_data import sample_forecast
 from grap import get_grap_stage
-from models import ForecastResponse, GrapStatus
+from models import (
+    ForecastResponse,
+    InversionReading,
+    PlumesResponse,
+    CompareResponse,
+    GrapStatus,
+)
 
 app = FastAPI(title="Delhi NCR Coupled AQI API")
 
@@ -24,17 +30,17 @@ def health():
 def forecast():
     return {"stations": sample_forecast}
 
-@app.get("/inversion")
+@app.get("/inversion", response_model=InversionReading)
 def inversion():
     # fake placeholder until Member 2/4 give you real data
     return {"region": "NCR", "inversion_strength": "moderate", "delta_t": 3.2}
 
-@app.get("/plumes")
+@app.get("/plumes", response_model=PlumesResponse)
 def plumes():
     # fake placeholder until Member 2 gives you real smoke-trajectory data
     return {"plumes": [{"source": "Punjab", "frp": 145.2, "direction": "SE"}]}
 
-@app.get("/compare")
+@app.get("/compare", response_model=CompareResponse)
 def compare():
     # this endpoint shows coupled vs uncoupled AQI side by side —
     # the core "why our model is better" evidence for judges
